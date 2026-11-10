@@ -16,8 +16,8 @@ frozen after Phase 0.
 - [x] Scope freeze, architecture, ADR, API conventions, runbook, demo script
 - [x] Install dependencies and verify lint, typecheck, tests, build
 - [x] Create the initial Prisma migration SQL (`0001_init`)
+- [x] First commit
 - [ ] Install Foundry (required before Phase 1)
-- [ ] First commit
 
 **Gate 0:** `npm run lint && npm run typecheck && npm run test && npm run build` passes; the schema
 validates; scope is frozen.
