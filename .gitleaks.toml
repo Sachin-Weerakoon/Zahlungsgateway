@@ -1,0 +1,11 @@
+# Gitleaks configuration. Extends the default ruleset.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known safe test values"
+paths = [
+  '''.*\.example$''',
+  '''.*_test\.go$''',
+  '''packages/shared/src/__tests__/.*''',
+]

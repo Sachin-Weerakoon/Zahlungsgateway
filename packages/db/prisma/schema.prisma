@@ -1,0 +1,292 @@
+// CryptoPay Gateway - PostgreSQL schema (SRS section 8).
+// Amounts are numeric(78,0) base units. Addresses are stored lowercase.
+// The audit log is append-only: the runtime database role must not have
+// UPDATE or DELETE rights on "AuditLog" (see docs/03-runbook.md).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MerchantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MerchantRole {
+  OWNER
+  VIEWER
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum InvoiceStatus {
+  CREATED
+  PENDING
+  CONFIRMING
+  PAID
+  UNDERPAID
+  OVERPAID
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum WebhookEndpointStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model Merchant {
+  id            String         @id @default(uuid()) @db.Uuid
+  walletAddress String         @unique @db.VarChar(42)
+  name          String?        @db.VarChar(120)
+  supportEmail  String?        @db.VarChar(254)
+  payoutAddress String?        @db.VarChar(42)
+  status        MerchantStatus @default(ACTIVE)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  members       MerchantMember[]
+  apiKeys       ApiKey[]
+  invoices      Invoice[]
+  webhook       WebhookEndpoint?
+  auditLogs     AuditLog[]
+  idempotency   IdempotencyRecord[]
+  authNonces    AuthNonce[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model MerchantMember {
+  id            String       @id @default(uuid()) @db.Uuid
+  merchantId    String       @db.Uuid
+  walletAddress String       @db.VarChar(42)
+  role          MerchantRole @default(VIEWER)
+  createdAt     DateTime     @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, walletAddress])
+  @@index([walletAddress])
+}
+
+model ApiKey {
+  id         String       @id @default(uuid()) @db.Uuid
+  merchantId String       @db.Uuid
+  name       String       @db.VarChar(80)
+  prefix     String       @unique @db.VarChar(16)
+  keyHash    String       @unique @db.VarChar(128)
+  status     ApiKeyStatus @default(ACTIVE)
+  createdAt  DateTime     @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status])
+}
+
+model Invoice {
+  id                String        @id @default(uuid()) @db.Uuid
+  merchantId        String        @db.Uuid
+  invoiceRef        String        @unique @db.Char(66)
+  amount            Decimal       @db.Decimal(78, 0)
+  tokenAddress      String        @db.VarChar(42)
+  description       String?       @db.VarChar(500)
+  merchantReference String?       @db.VarChar(255)
+  metadata          Json?
+  status            InvoiceStatus @default(CREATED)
+  expiresAt         DateTime
+  idempotencyKey    String?       @db.VarChar(255)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  paidAt            DateTime?
+  cancelledAt       DateTime?
+
+  merchant       Merchant               @relation(fields: [merchantId], references: [id])
+  payments       Payment[]
+  statusHistory  InvoiceStatusHistory[]
+  webhookEvents  WebhookEvent[]
+
+  @@unique([merchantId, idempotencyKey])
+  @@index([merchantId, createdAt])
+  @@index([merchantId, status])
+  @@index([status, expiresAt])
+}
+
+model InvoiceStatusHistory {
+  id         String        @id @default(uuid()) @db.Uuid
+  invoiceId  String        @db.Uuid
+  fromStatus InvoiceStatus?
+  toStatus   InvoiceStatus
+  reason     String?       @db.VarChar(255)
+  txHash     String?       @db.VarChar(66)
+  createdAt  DateTime      @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId, createdAt])
+}
+
+model Payment {
+  id            String   @id @default(uuid()) @db.Uuid
+  invoiceId     String   @db.Uuid
+  txHash        String   @db.VarChar(66)
+  logIndex      Int
+  blockNumber   BigInt
+  blockHash     String   @db.VarChar(66)
+  payer         String   @db.VarChar(42)
+  gross         Decimal  @db.Decimal(78, 0)
+  fee           Decimal  @db.Decimal(78, 0)
+  net           Decimal  @db.Decimal(78, 0)
+  refundedTotal Decimal  @default(0) @db.Decimal(78, 0)
+  confirmations Int      @default(0)
+  isLate        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id])
+  refunds Refund[]
+
+  @@unique([txHash, logIndex])
+  @@index([invoiceId])
+  @@index([blockNumber])
+  @@index([payer])
+}
+
+model Refund {
+  id        String   @id @default(uuid()) @db.Uuid
+  paymentId String   @db.Uuid
+  txHash    String   @db.VarChar(66)
+  logIndex  Int
+  amount    Decimal  @db.Decimal(78, 0)
+  createdAt DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@unique([txHash, logIndex])
+  @@index([paymentId])
+}
+
+model WebhookEndpoint {
+  id              String                 @id @default(uuid()) @db.Uuid
+  merchantId      String                 @unique @db.Uuid
+  url             String                 @db.VarChar(2048)
+  secretEncrypted String                 @db.Text
+  status          WebhookEndpointStatus  @default(ACTIVE)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model WebhookEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  invoiceId String   @db.Uuid
+  type      String   @db.VarChar(64)
+  sequence  Int
+  payload   Json
+  createdAt DateTime @default(now())
+
+  invoice    Invoice           @relation(fields: [invoiceId], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@unique([invoiceId, sequence])
+  @@index([createdAt])
+}
+
+model WebhookDelivery {
+  id           String                @id @default(uuid()) @db.Uuid
+  eventId      String                @db.Uuid
+  attempt      Int
+  status       WebhookDeliveryStatus @default(PENDING)
+  statusCode   Int?
+  durationMs   Int?
+  error        String?               @db.VarChar(500)
+  nextRetryAt  DateTime?
+  createdAt    DateTime              @default(now())
+
+  event WebhookEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, attempt])
+  @@index([status, nextRetryAt])
+}
+
+model Token {
+  address  String   @id @db.VarChar(42)
+  symbol   String   @db.VarChar(16)
+  decimals Int
+  allowed  Boolean  @default(false)
+  addedAt  DateTime @default(now())
+
+  @@index([allowed])
+}
+
+model IndexerState {
+  chainId            Int      @id
+  lastProcessedBlock BigInt
+  lastBlockHash      String   @db.VarChar(66)
+  updatedAt          DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actor     String   @db.VarChar(42)
+  action    String   @db.VarChar(64)
+  target    String?  @db.VarChar(255)
+  ip        String?  @db.VarChar(45)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  merchantId String?  @db.Uuid
+  merchant   Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@index([createdAt])
+  @@index([actor])
+  @@index([merchantId])
+}
+
+model AuthNonce {
+  id        String    @id @default(uuid()) @db.Uuid
+  nonce     String    @unique @db.VarChar(64)
+  address   String    @db.VarChar(42)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  merchantId String?  @db.Uuid
+  merchant   Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@index([expiresAt])
+  @@index([address])
+}
+
+model IdempotencyRecord {
+  id           String   @id @default(uuid()) @db.Uuid
+  merchantId   String   @db.Uuid
+  key          String   @db.VarChar(255)
+  requestHash  String   @db.VarChar(64)
+  responseBody Json
+  statusCode   Int
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, key])
+  @@index([expiresAt])
+}

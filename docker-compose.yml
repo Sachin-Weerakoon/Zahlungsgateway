@@ -1,0 +1,54 @@
+name: cryptopay
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cryptopay-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cryptopay
+      POSTGRES_PASSWORD: cryptopay
+      POSTGRES_DB: cryptopay
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cryptopay -d cryptopay']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cryptopay-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Local development chain. Testnet deployments use Base Sepolia instead.
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: cryptopay-anvil
+    restart: unless-stopped
+    entrypoint: ['anvil']
+    command: ['--host', '0.0.0.0', '--port', '8545', '--chain-id', '31337', '--block-time', '2']
+    ports:
+      - '8545:8545'
+    healthcheck:
+      test: ['CMD-SHELL', 'cast block-number --rpc-url http://localhost:8545 || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:

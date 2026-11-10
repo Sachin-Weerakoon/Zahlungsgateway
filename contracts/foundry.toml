@@ -1,0 +1,23 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+fs_permissions = [{ access = "read", path = "./deployments" }]
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = true
+
+[fuzz]
+runs = 256
+
+[invariant]
+runs = 256
+depth = 64
+
+# Contract sources land in Phase 1 (see docs/06-phase-plan.md).

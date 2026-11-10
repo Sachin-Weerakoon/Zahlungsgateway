@@ -1,0 +1,44 @@
+{
+  "name": "cryptopay-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CryptoPay Gateway - non-custodial stablecoin payment gateway (testnet only)",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "build:shared": "npm run build --workspace @cryptopay/shared",
+    "build": "npm run build:shared && npm run build --workspace @cryptopay/web",
+    "dev": "npm run dev --workspace @cryptopay/web",
+    "dev:indexer": "npm run dev --workspace @cryptopay/indexer",
+    "dev:worker": "npm run dev --workspace @cryptopay/worker",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
+    "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "npm run generate --workspace @cryptopay/db",
+    "db:migrate": "npm run migrate --workspace @cryptopay/db",
+    "db:seed": "npm run seed --workspace @cryptopay/db",
+    "db:studio": "npm run studio --workspace @cryptopay/db",
+    "infra:up": "docker compose up -d postgres redis anvil",
+    "infra:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.0",
+    "prettier": "^3.6.0",
+    "tsx": "^4.20.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^4.1.12"
+  }
+}

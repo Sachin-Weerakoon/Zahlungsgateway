@@ -1,0 +1,333 @@
+openapi: 3.1.0
+info:
+  title: CryptoPay Gateway API
+  version: 0.1.0
+  description: >
+    Non-custodial stablecoin payment gateway (testnet only). Amounts are decimal strings in
+    base units; timestamps are ISO 8601 UTC. This file is a starter contract and grows with
+    Phase 2.
+servers:
+  - url: http://localhost:3000
+    description: Local development
+tags:
+  - name: Auth
+  - name: Invoices
+  - name: Payments
+  - name: Reports
+  - name: Public
+paths:
+  /api/auth/nonce:
+    get:
+      tags: [Auth]
+      summary: Get a single-use SIWE nonce (5 minute lifetime)
+      responses:
+        '200':
+          description: Nonce issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nonce, expiresAt]
+                properties:
+                  nonce:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+  /api/auth/verify:
+    post:
+      tags: [Auth]
+      summary: Verify a SIWE signature and start a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, signature]
+              properties:
+                message:
+                  type: string
+                signature:
+                  type: string
+      responses:
+        '200':
+          description: Session cookie issued
+        '401':
+          $ref: '#/components/responses/Error'
+  /api/v1/invoices:
+    post:
+      tags: [Invoices]
+      summary: Create an invoice
+      security:
+        - apiKey: []
+        - session: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+          required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvoice'
+      responses:
+        '201':
+          description: Invoice created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+    get:
+      tags: [Invoices]
+      summary: List invoices (cursor pagination)
+      security:
+        - apiKey: []
+        - session: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/InvoiceStatus'
+        - in: query
+          name: cursor
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Invoice page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, nextCursor]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invoice'
+                  nextCursor:
+                    type: [string, 'null']
+  /api/v1/invoices/{id}:
+    get:
+      tags: [Invoices]
+      summary: Get one invoice with payments and status history
+      security:
+        - apiKey: []
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: Invoice detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/invoices/{id}/cancel:
+    post:
+      tags: [Invoices]
+      summary: Cancel an invoice in CREATED status
+      security:
+        - apiKey: []
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: Invoice cancelled
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/public/invoices/{id}:
+    get:
+      tags: [Public]
+      summary: Checkout data for one invoice (no merchant secrets)
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: Public invoice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicInvoice'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/public/invoices/{id}/tx:
+    post:
+      tags: [Public]
+      summary: Report a transaction hash (informational only)
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [txHash]
+              properties:
+                txHash:
+                  type: string
+                  pattern: '^0x[0-9a-fA-F]{64}$'
+      responses:
+        '202':
+          description: Hash accepted for observation
+        '422':
+          $ref: '#/components/responses/Error'
+  /api/public/invoices/{id}/events:
+    get:
+      tags: [Public]
+      summary: Server-sent events stream of invoice status changes
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+    session:
+      type: apiKey
+      in: cookie
+      name: cryptopay_session
+  parameters:
+    InvoiceId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Error:
+      description: Standard error body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    InvoiceStatus:
+      type: string
+      enum: [CREATED, PENDING, CONFIRMING, PAID, UNDERPAID, OVERPAID, EXPIRED, CANCELLED, REFUNDED]
+    CreateInvoice:
+      type: object
+      required: [amount, tokenAddress]
+      properties:
+        amount:
+          type: string
+          pattern: '^[1-9][0-9]*$'
+          examples: ['25000000']
+        tokenAddress:
+          type: string
+          pattern: '^0x[0-9a-fA-F]{40}$'
+        description:
+          type: string
+          maxLength: 500
+        merchantReference:
+          type: string
+          maxLength: 255
+        metadata:
+          type: object
+          additionalProperties: true
+        expiresInMinutes:
+          type: integer
+          minimum: 5
+          maximum: 10080
+          default: 30
+    Invoice:
+      type: object
+      required: [id, invoiceRef, status, amount, tokenAddress, expiresAt, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        invoiceRef:
+          type: string
+          pattern: '^0x[0-9a-fA-F]{64}$'
+        status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        amount:
+          type: string
+        tokenAddress:
+          type: string
+        merchantReference:
+          type: [string, 'null']
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    PublicInvoice:
+      type: object
+      required: [id, status, amount, token, merchant, contractAddress, chainId, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        amount:
+          type: string
+        token:
+          type: object
+          required: [address, symbol, decimals]
+          properties:
+            address:
+              type: string
+            symbol:
+              type: string
+            decimals:
+              type: integer
+        merchant:
+          type: object
+          required: [name, payoutAddress]
+          properties:
+            name:
+              type: string
+            payoutAddress:
+              type: string
+        contractAddress:
+          type: string
+        chainId:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            requestId:
+              type: string

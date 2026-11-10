@@ -1,0 +1,12 @@
+node_modules
+dist
+.next
+out
+build
+coverage
+contracts/cache
+contracts/out
+contracts/broadcast
+contracts/lib
+packages/db/generated
+package-lock.json
