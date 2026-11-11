@@ -18,6 +18,8 @@ export interface PublicInvoice {
   contractAddress: string;
   chainId: number;
   invoiceRef: string;
+  /** Salt passed to PaymentProcessor.pay. Null for legacy invoices created before binding. */
+  salt: string | null;
   expiresAt: string;
   createdAt: string;
 }

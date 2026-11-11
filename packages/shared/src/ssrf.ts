@@ -56,27 +56,102 @@ function inIpv4Cidr(ip: string, base: string, prefix: number): boolean {
   return (ipInt & mask) === (baseInt & mask);
 }
 
+/**
+ * Parse an IPv6 literal into eight 16-bit groups. Handles `::` compression and a trailing
+ * dotted IPv4 part (e.g. `::ffff:1.2.3.4`). Returns null when the text is not valid IPv6.
+ */
+export function parseIpv6(address: string): number[] | null {
+  let text = address.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const zone = text.indexOf('%');
+  if (zone !== -1) text = text.slice(0, zone);
+  if (!text.includes(':')) return null;
+
+  // Convert a trailing dotted IPv4 into two hex groups.
+  const lastColon = text.lastIndexOf(':');
+  const tail = text.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const v4 = ipv4ToInt(tail);
+    if (v4 === null) return null;
+    text = `${text.slice(0, lastColon + 1)}${(v4 >>> 16).toString(16)}:${(v4 & 0xffff).toString(16)}`;
+  }
+
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const parseGroups = (part: string): number[] | null => {
+    if (part === '') return [];
+    const groups: number[] = [];
+    for (const group of part.split(':')) {
+      if (!/^[0-9a-f]{1,4}$/.test(group)) return null;
+      groups.push(parseInt(group, 16));
+    }
+    return groups;
+  };
+
+  const head = parseGroups(halves[0] ?? '');
+  const rest = halves.length === 2 ? parseGroups(halves[1] ?? '') : [];
+  if (!head || !rest) return null;
+
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const missing = 8 - head.length - rest.length;
+  if (missing < 1) return null;
+  return [...head, ...new Array<number>(missing).fill(0), ...rest];
+}
+
+function embeddedIpv4(high: number, low: number): string {
+  return [high >>> 8, high & 0xff, low >>> 8, low & 0xff].join('.');
+}
+
+function isBlockedIpv4(address: string): boolean {
+  if (ipv4ToInt(address) === null) return false;
+  return BLOCKED_IPV4.some(([base, prefix]) => inIpv4Cidr(address, base, prefix));
+}
+
+function isBlockedIpv6(groups: number[]): boolean {
+  const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = groups;
+  const firstSixZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0;
+
+  // :: (unspecified) and ::1 (loopback)
+  if (firstSixZero && g6 === 0 && (g7 === 0 || g7 === 1)) return true;
+  // IPv4-compatible ::a.b.c.d (deprecated) and IPv4-mapped ::ffff:a.b.c.d
+  if (firstSixZero || (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff)) {
+    return isBlockedIpv4(embeddedIpv4(g6, g7));
+  }
+  // IPv4-translated ::ffff:0:a.b.c.d
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) {
+    return isBlockedIpv4(embeddedIpv4(g6, g7));
+  }
+  // NAT64 well-known prefix 64:ff9b::/96 can reach internal IPv4 through a translator.
+  if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+    return isBlockedIpv4(embeddedIpv4(g6, g7));
+  }
+  // Local-use NAT64 64:ff9b:1::/48
+  if (g0 === 0x64 && g1 === 0xff9b && g2 === 1) return true;
+  // 6to4 2002::/16 embeds an IPv4 address in groups 1-2.
+  if (g0 === 0x2002) return isBlockedIpv4(embeddedIpv4(g1, g2));
+  // Teredo 2001::/32, documentation 2001:db8::/32, ORCHID and benchmarking 2001:2::/48 / 2001:10::/28
+  if (g0 === 0x2001 && (g1 === 0 || g1 === 0xdb8 || g1 === 2 || (g1 & 0xfff0) === 0x10)) return true;
+  // Discard-only 100::/64
+  if (g0 === 0x100 && g1 === 0 && g2 === 0 && g3 === 0) return true;
+  // Unique local fc00::/7
+  if ((g0 & 0xfe00) === 0xfc00) return true;
+  // Link-local fe80::/10 and deprecated site-local fec0::/10
+  if ((g0 & 0xffc0) === 0xfe80 || (g0 & 0xffc0) === 0xfec0) return true;
+  // Multicast ff00::/8
+  if ((g0 & 0xff00) === 0xff00) return true;
+  return false;
+}
+
 /** True when the address is not publicly routable and must never receive webhooks. */
 export function isBlockedAddress(address: string): boolean {
   const normalized = address.trim().toLowerCase().replace(/^\[|\]$/g, '');
 
   if (normalized.includes(':')) {
-    // IPv4-mapped IPv6, e.g. ::ffff:127.0.0.1
-    const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped?.[1]) return isBlockedAddress(mapped[1]);
-
-    if (normalized === '::' || normalized === '::1') return true;
-    if (normalized.startsWith('fe8') || normalized.startsWith('fe9')) return true; // link-local
-    if (normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
-    if (/^f[cd]/.test(normalized)) return true; // unique local fc00::/7
-    if (normalized.startsWith('ff')) return true; // multicast
-    return false;
+    const groups = parseIpv6(normalized);
+    // Unparseable IPv6-looking input is rejected rather than trusted.
+    return groups === null ? true : isBlockedIpv6(groups);
   }
 
-  for (const [base, prefix] of BLOCKED_IPV4) {
-    if (inIpv4Cidr(normalized, base, prefix)) return true;
-  }
-  return false;
+  return isBlockedIpv4(normalized);
 }
 
 export interface WebhookUrlValidation {
@@ -106,7 +181,7 @@ export function validateWebhookUrl(rawUrl: string): WebhookUrlValidation {
     return { ok: false, reason: 'Webhook URL is missing a hostname' };
   }
 
-  const hostname = url.hostname.toLowerCase();
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
   if (hostname === 'localhost' || BLOCKED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) {
     return { ok: false, reason: 'Webhook URL must not target a local hostname' };
   }

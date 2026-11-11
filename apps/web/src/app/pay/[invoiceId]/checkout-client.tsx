@@ -9,11 +9,14 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  encodeAbiParameters,
   formatUnits,
   getAddress,
   http,
   isAddress,
   isHex,
+  keccak256,
+  type Hex,
   type Address,
   type Chain,
   type Hash,
@@ -63,13 +66,33 @@ function invoiceParameters(invoice: PublicInvoice) {
   ) {
     throw new Error('The invoice contains invalid payment details.');
   }
+  if (!invoice.salt || !isHex(invoice.salt) || invoice.salt.length !== 66) {
+    throw new Error(
+      'This invoice was created before payment binding and cannot be paid. Ask the merchant for a new invoice.',
+    );
+  }
+
+  const token = getAddress(invoice.token.address);
+  const payout = getAddress(invoice.merchant.payoutAddress);
+  const amount = BigInt(invoice.amount);
+  const salt = invoice.salt as Hex;
+  const expectedRef = keccak256(
+    encodeAbiParameters(
+      [{ type: 'address' }, { type: 'address' }, { type: 'uint256' }, { type: 'bytes32' }],
+      [payout, token, amount, salt],
+    ),
+  );
+  if (expectedRef.toLowerCase() !== invoice.invoiceRef.toLowerCase()) {
+    throw new Error('The invoice payment details do not match its reference.');
+  }
 
   return {
-    token: getAddress(invoice.token.address),
+    token,
     processor: getAddress(invoice.contractAddress),
-    payout: getAddress(invoice.merchant.payoutAddress),
+    payout,
     invoiceRef: invoice.invoiceRef,
-    amount: BigInt(invoice.amount),
+    salt,
+    amount,
   };
 }
 
@@ -277,7 +300,7 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
     setNotice('');
     try {
       const chain = chainFor(invoice.chainId);
-      const { token, processor, payout, invoiceRef, amount } = invoiceParameters(invoice);
+      const { token, processor, payout, salt, amount } = invoiceParameters(invoice);
       if (payout.toLowerCase() === ZERO_ADDRESS) {
         throw new Error('The merchant has not configured a payout address.');
       }
@@ -288,7 +311,7 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
         address: processor,
         abi: paymentProcessorAbi,
         functionName: 'pay',
-        args: [invoiceRef, payout, token, amount],
+        args: [salt, payout, token, amount],
       });
       setTxHash(hash);
       setNotice('Transaction submitted. Waiting for the network receipt.');
@@ -317,7 +340,11 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
   }
 
   if (loading) {
-    return <main className="mx-auto flex min-h-screen max-w-3xl items-center px-6">Loading invoice…</main>;
+    return (
+      <main className="mx-auto flex min-h-screen max-w-3xl items-center px-6">
+        Loading invoice…
+      </main>
+    );
   }
 
   if (loadError || !invoice || !status) {
@@ -338,14 +365,16 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
   const amount = BigInt(invoice.amount);
   const amountText = formatUnits(amount, invoice.token.decimals);
   const chainName = CHAIN_NAMES[invoice.chainId as SupportedChainId] ?? `Chain ${invoice.chainId}`;
-  const addressReady = isAddress(invoice.contractAddress, { strict: false }) &&
+  const addressReady =
+    isAddress(invoice.contractAddress, { strict: false }) &&
     isAddress(invoice.token.address, { strict: false }) &&
     isAddress(invoice.merchant.payoutAddress, { strict: false }) &&
     invoice.merchant.payoutAddress.toLowerCase() !== ZERO_ADDRESS;
   const onCorrectNetwork = walletChainId === invoice.chainId;
   const enoughBalance = balance !== null && balance >= amount;
   const needsApproval = allowance === null || allowance < amount;
-  const canStartPayment = isPayable && addressReady && account !== null && onCorrectNetwork && enoughBalance;
+  const canStartPayment =
+    isPayable && addressReady && account !== null && onCorrectNetwork && enoughBalance;
   const explorerUrl = EXPLORER_URLS[invoice.chainId as SupportedChainId];
   const expiryText = new Intl.DateTimeFormat('en', {
     dateStyle: 'medium',
@@ -371,9 +400,12 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
               <div>
                 <p className="text-sm text-slate-500">Pay {invoice.merchant.name}</p>
                 <h1 className="mt-2 break-all text-3xl font-semibold tracking-tight sm:text-4xl">
-                  {amountText} <span className="text-xl text-slate-500">{invoice.token.symbol}</span>
+                  {amountText}{' '}
+                  <span className="text-xl text-slate-500">{invoice.token.symbol}</span>
                 </h1>
-                {invoice.description && <p className="mt-3 max-w-xl text-sm text-slate-600">{invoice.description}</p>}
+                {invoice.description && (
+                  <p className="mt-3 max-w-xl text-sm text-slate-600">{invoice.description}</p>
+                )}
               </div>
               <span
                 className={`rounded border px-2.5 py-1 text-xs font-medium ${
@@ -456,7 +488,9 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
 
             {isExpired && <p className="mt-4 text-sm text-rose-700">This invoice has expired.</p>}
             {!isExpired && !isPayable && status !== InvoiceStatuses.PAID && (
-              <p className="mt-4 text-sm text-slate-600">This invoice is no longer accepting payments.</p>
+              <p className="mt-4 text-sm text-slate-600">
+                This invoice is no longer accepting payments.
+              </p>
             )}
             {account && onCorrectNetwork && balance !== null && !enoughBalance && isPayable && (
               <p className="mt-4 text-sm text-rose-700">
@@ -464,7 +498,9 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
               </p>
             )}
             {!addressReady && isPayable && (
-              <p className="mt-4 text-sm text-rose-700">Payment contract or merchant payout is not configured.</p>
+              <p className="mt-4 text-sm text-rose-700">
+                Payment contract or merchant payout is not configured.
+              </p>
             )}
 
             {account && onCorrectNetwork && isPayable && addressReady && (
@@ -491,7 +527,11 @@ export default function CheckoutClient({ invoiceId }: { invoiceId: string }) {
                 {actionError}
               </p>
             )}
-            {notice && <p role="status" className="mt-4 text-sm text-slate-600">{notice}</p>}
+            {notice && (
+              <p role="status" className="mt-4 text-sm text-slate-600">
+                {notice}
+              </p>
+            )}
             {txHash && explorerUrl && (
               <p className="mt-3 text-sm">
                 <a

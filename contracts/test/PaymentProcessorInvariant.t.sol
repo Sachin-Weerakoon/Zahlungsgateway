@@ -41,9 +41,10 @@ contract PaymentHandler is Test {
         uint256 amount = bound(amountSeed, 1, 1_000_000);
         if (token.balanceOf(payer) < amount) return;
 
-        bytes32 invoiceRef = keccak256(abi.encode(counter++));
+        bytes32 salt = keccak256(abi.encode(counter++));
+        bytes32 invoiceRef = processor.invoiceRefFor(salt, merchant, address(token), amount);
         vm.prank(payer);
-        processor.pay(invoiceRef, merchant, address(token), amount);
+        processor.pay(salt, merchant, address(token), amount);
         refs.push(invoiceRef);
     }
 

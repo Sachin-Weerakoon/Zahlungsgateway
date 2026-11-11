@@ -54,7 +54,8 @@ contract PaymentProcessorTest is Test {
     uint256 internal constant NET = 24_750_000;
     uint256 internal constant FUNDING = 1_000 * 10 ** 6;
 
-    bytes32 internal constant REF = keccak256("ORDER-1042");
+    bytes32 internal constant SALT = keccak256("ORDER-1042");
+    bytes32 internal REF;
 
     function setUp() public {
         token = new TestUSDC();
@@ -68,15 +69,17 @@ contract PaymentProcessorTest is Test {
         token.approve(address(processor), type(uint256).max);
         vm.prank(merchant);
         token.approve(address(processor), type(uint256).max);
+
+        REF = processor.invoiceRefFor(SALT, merchant, address(token), AMOUNT);
     }
 
-    function _pay(bytes32 invoiceRef) internal {
+    function _pay() internal {
         vm.prank(payer);
-        processor.pay(invoiceRef, merchant, address(token), AMOUNT);
+        processor.pay(SALT, merchant, address(token), AMOUNT);
     }
 
     function test_PaySplitsFeeAndNet() public {
-        _pay(REF);
+        _pay();
 
         assertEq(token.balanceOf(merchant), FUNDING + NET);
         assertEq(token.balanceOf(treasury), FEE);
@@ -97,7 +100,7 @@ contract PaymentProcessorTest is Test {
     function test_PayEmitsPaymentReceived() public {
         vm.expectEmit(true, true, true, true, address(processor));
         emit PaymentProcessor.PaymentReceived(REF, merchant, payer, address(token), AMOUNT, FEE);
-        _pay(REF);
+        _pay();
     }
 
     function test_RevertWhen_TokenNotAllowed() public {
@@ -107,27 +110,27 @@ contract PaymentProcessorTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(PaymentProcessor.TokenNotAllowed.selector, address(token))
         );
-        processor.pay(REF, merchant, address(token), AMOUNT);
+        processor.pay(SALT, merchant, address(token), AMOUNT);
     }
 
     function test_RevertWhen_AlreadyPaid() public {
-        _pay(REF);
+        _pay();
 
         vm.prank(payer);
         vm.expectRevert(abi.encodeWithSelector(PaymentProcessor.AlreadyPaid.selector, REF));
-        processor.pay(REF, merchant, address(token), AMOUNT);
+        processor.pay(SALT, merchant, address(token), AMOUNT);
     }
 
     function test_RevertWhen_ZeroAmount() public {
         vm.prank(payer);
         vm.expectRevert(PaymentProcessor.InvalidAmount.selector);
-        processor.pay(REF, merchant, address(token), 0);
+        processor.pay(SALT, merchant, address(token), 0);
     }
 
     function test_RevertWhen_ZeroMerchant() public {
         vm.prank(payer);
         vm.expectRevert(PaymentProcessor.ZeroAddress.selector);
-        processor.pay(REF, address(0), address(token), AMOUNT);
+        processor.pay(SALT, address(0), address(token), AMOUNT);
     }
 
     function test_RevertWhen_ZeroReference() public {
@@ -140,11 +143,11 @@ contract PaymentProcessorTest is Test {
         processor.pause();
         vm.prank(payer);
         vm.expectRevert();
-        processor.pay(REF, merchant, address(token), AMOUNT);
+        processor.pay(SALT, merchant, address(token), AMOUNT);
     }
 
     function test_RefundPartialThenFull() public {
-        _pay(REF);
+        _pay();
 
         vm.prank(merchant);
         processor.refund(REF, 10_000_000);
@@ -161,7 +164,7 @@ contract PaymentProcessorTest is Test {
     }
 
     function test_RefundWorksWhilePaused() public {
-        _pay(REF);
+        _pay();
         processor.pause();
 
         vm.prank(merchant);
@@ -170,7 +173,7 @@ contract PaymentProcessorTest is Test {
     }
 
     function test_RevertWhen_RefundAboveNet() public {
-        _pay(REF);
+        _pay();
 
         vm.prank(merchant);
         vm.expectRevert(
@@ -180,7 +183,7 @@ contract PaymentProcessorTest is Test {
     }
 
     function test_RevertWhen_RefundByNonMerchant() public {
-        _pay(REF);
+        _pay();
 
         vm.prank(stranger);
         vm.expectRevert(
@@ -205,7 +208,7 @@ contract PaymentProcessorTest is Test {
 
     function test_PayWithZeroFee() public {
         processor.setFeeBps(0);
-        _pay(REF);
+        _pay();
 
         assertEq(token.balanceOf(treasury), 0);
         assertEq(token.balanceOf(merchant), FUNDING + AMOUNT);
@@ -233,7 +236,7 @@ contract PaymentProcessorTest is Test {
     function test_PayGasUnder150k() public {
         vm.prank(payer);
         uint256 gasBefore = gasleft();
-        processor.pay(REF, merchant, address(token), AMOUNT);
+        processor.pay(SALT, merchant, address(token), AMOUNT);
         uint256 gasUsed = gasBefore - gasleft();
         emit log_named_uint("pay gas used", gasUsed);
         assertLt(gasUsed, 150_000);
@@ -252,11 +255,11 @@ contract PaymentProcessorTest is Test {
                 PaymentProcessor.AmountTooLarge.selector, tooLarge, processor.MAX_AMOUNT()
             )
         );
-        processor.pay(REF, merchant, address(token), tooLarge);
+        processor.pay(SALT, merchant, address(token), tooLarge);
     }
 
     function test_FeeChangeDoesNotAffectHistoricalPayment() public {
-        _pay(REF);
+        _pay();
         processor.setFeeBps(500);
 
         PaymentProcessor.Payment memory payment = processor.paymentOf(REF);
@@ -266,7 +269,7 @@ contract PaymentProcessorTest is Test {
     }
 
     function test_RemovedTokenRemainsRefundable() public {
-        _pay(REF);
+        _pay();
         processor.setTokenAllowed(address(token), false);
 
         // The payment keeps its token through the append-only registry.
@@ -284,7 +287,7 @@ contract PaymentProcessorTest is Test {
         assertEq(processor.tokenCount(), 1);
         assertEq(processor.tokenAt(1), address(token));
 
-        _pay(REF);
+        _pay();
         assertEq(processor.paymentOf(REF).token, address(token));
     }
 
@@ -311,11 +314,35 @@ contract PaymentProcessorTest is Test {
         hostile.setAttack(processor, keccak256("attack"), merchant);
 
         vm.prank(payer);
-        processor.pay(REF, merchant, address(hostile), AMOUNT);
+        processor.pay(SALT, merchant, address(hostile), AMOUNT);
 
         assertTrue(hostile.reentryReverted());
-        assertTrue(processor.isPaid(REF));
+        assertTrue(
+            processor.isPaid(processor.invoiceRefFor(SALT, merchant, address(hostile), AMOUNT))
+        );
         assertEq(hostile.balanceOf(address(processor)), 0);
+    }
+
+    function test_RefIsBoundToTerms() public view {
+        bytes32 expected = keccak256(abi.encode(merchant, address(token), AMOUNT, SALT));
+        assertEq(REF, expected);
+        assertTrue(processor.invoiceRefFor(SALT, stranger, address(token), AMOUNT) != REF);
+        assertTrue(processor.invoiceRefFor(SALT, merchant, address(token), AMOUNT - 1) != REF);
+    }
+
+    /// @notice A front-runner reusing the salt with other terms cannot occupy the reference.
+    function test_FrontRunWithOtherTermsDoesNotBlockInvoice() public {
+        token.mint(stranger, FUNDING);
+        vm.startPrank(stranger);
+        token.approve(address(processor), type(uint256).max);
+        // Attacker pays themselves 1 base unit with the victim invoice's salt.
+        processor.pay(SALT, stranger, address(token), 1);
+        vm.stopPrank();
+
+        assertFalse(processor.isPaid(REF));
+        _pay();
+        assertTrue(processor.isPaid(REF));
+        assertEq(processor.paymentOf(REF).merchant, merchant);
     }
 
     function testFuzz_FeeMath(uint256 amount, uint256 feeBps) public {
@@ -325,10 +352,11 @@ contract PaymentProcessorTest is Test {
 
         uint256 expectedFee = (amount * feeBps) / processor.BPS_DENOMINATOR();
         uint256 expectedNet = amount - expectedFee;
-        bytes32 invoiceRef = keccak256(abi.encode(amount, feeBps));
+        bytes32 salt = keccak256(abi.encode(amount, feeBps));
+        bytes32 invoiceRef = processor.invoiceRefFor(salt, merchant, address(token), amount);
 
         vm.prank(payer);
-        processor.pay(invoiceRef, merchant, address(token), amount);
+        processor.pay(salt, merchant, address(token), amount);
 
         PaymentProcessor.Payment memory payment = processor.paymentOf(invoiceRef);
         assertEq(payment.fee, expectedFee);

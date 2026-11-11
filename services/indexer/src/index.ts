@@ -109,9 +109,9 @@ async function main() {
         state.lastProcessedBlock = rewindTo;
       }
 
-      // Only index blocks that reached the confirmation depth; those logs cannot be reorged
-      // away by the time they are written.
-      const safeHead = latest - BigInt(config.INDEXER_CONFIRMATIONS);
+      // Only index blocks that reached the confirmation depth. A block's confirmation count is
+      // `latest - block + 1`, so N confirmations means `block <= latest - N + 1`.
+      const safeHead = latest - BigInt(config.INDEXER_CONFIRMATIONS) + 1n;
       const fromBlock = cursor.lastProcessedBlock + 1n;
 
       if (safeHead >= fromBlock) {

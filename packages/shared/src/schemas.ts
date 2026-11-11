@@ -5,6 +5,7 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_EXPIRY_MINUTES,
   MAX_MERCHANT_REFERENCE_LENGTH,
+  MAX_PAYMENT_AMOUNT,
   MAX_METADATA_BYTES,
   MAX_PAGE_SIZE,
   MIN_EXPIRY_MINUTES,
@@ -44,7 +45,10 @@ export const metadataSchema = z
   );
 
 export const createInvoiceSchema = z.object({
-  amount: baseUnitSchema,
+  amount: baseUnitSchema.refine(
+    (value) => !/^(0|[1-9][0-9]*)$/.test(value) || BigInt(value) <= MAX_PAYMENT_AMOUNT,
+    `Amount must be at most ${MAX_PAYMENT_AMOUNT.toString()} base units (contract limit)`,
+  ),
   tokenAddress: evmAddressSchema,
   description: z.string().trim().max(MAX_DESCRIPTION_LENGTH).optional(),
   merchantReference: z.string().trim().max(MAX_MERCHANT_REFERENCE_LENGTH).optional(),

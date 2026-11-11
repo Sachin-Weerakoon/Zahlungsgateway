@@ -29,6 +29,12 @@ export async function enqueueWebhookEvent(
   db: DbClient,
   params: EnqueueWebhookParams,
 ): Promise<string> {
+  // Serialise sequence allocation per invoice. Without the row lock, two concurrent writers
+  // (indexer and worker) read the same max(sequence) and one transaction fails on the
+  // (invoiceId, sequence) unique constraint. Callers pass a transaction client, so the lock is
+  // held until their transaction commits.
+  await db.$queryRaw`SELECT 1 FROM "Invoice" WHERE "id" = ${params.invoiceId}::uuid FOR UPDATE`;
+
   const last = await db.webhookEvent.findFirst({
     where: { invoiceId: params.invoiceId },
     orderBy: { sequence: 'desc' },

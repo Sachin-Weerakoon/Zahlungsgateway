@@ -79,14 +79,42 @@ function settlementEventType(status: InvoiceStatus): WebhookEventType {
   return WebhookEventType.InvoiceOverpaid;
 }
 
+/** Thrown inside a transaction when the invoice changed concurrently; the caller retries. */
+class StaleInvoiceError extends Error {
+  constructor() {
+    super('invoice status changed concurrently');
+    this.name = 'StaleInvoiceError';
+  }
+}
+
+const MAX_STALE_RETRIES = 3;
+
+async function withStaleRetry(run: () => Promise<void>): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await run();
+      return;
+    } catch (error) {
+      if (!(error instanceof StaleInvoiceError) || attempt >= MAX_STALE_RETRIES) throw error;
+    }
+  }
+}
+
 /**
  * Apply a PaymentReceived log. Idempotent on (txHash, logIndex).
  *
- * The invoice moves to CONFIRMING immediately so the checkout can react within seconds; the
- * final PAID/UNDERPAID/OVERPAID decision waits for N confirmations (FR-IDX-2, FR-INV-7).
+ * The log is only accepted when it pays the invoice's bound merchant payout address in the
+ * invoice token. The contract derives the reference from (merchant, token, amount, salt), so this
+ * check is defence in depth for legacy invoices and misconfiguration.
+ *
+ * The invoice status is re-read and updated conditionally inside the transaction so a concurrent
+ * expiry or cancellation can never be overwritten (and a payment racing them is flagged late).
  */
 export async function processPaymentLog(log: PaymentLog, context: ProcessorContext): Promise<void> {
-  const invoice = await prisma.invoice.findUnique({ where: { invoiceRef: log.invoiceRef } });
+  const invoice = await prisma.invoice.findUnique({
+    where: { invoiceRef: log.invoiceRef },
+    include: { merchant: { select: { payoutAddress: true } } },
+  });
   if (!invoice) {
     context.logger.warn(
       { invoiceRef: log.invoiceRef, txHash: log.txHash },
@@ -108,70 +136,98 @@ export async function processPaymentLog(log: PaymentLog, context: ProcessorConte
     return;
   }
 
-  await prisma.$transaction(async (tx) => {
-    const existing = await tx.payment.findUnique({
-      where: { txHash_logIndex: { txHash: log.txHash, logIndex: log.logIndex } },
-    });
-    if (existing) return;
-
-    const isLate = LATE_STATUSES.includes(invoice.status);
-    const net = log.gross - log.fee;
-
-    const payment = await tx.payment.create({
-      data: {
+  const expectedPayout = (invoice.payoutAddress ?? invoice.merchant.payoutAddress)?.toLowerCase();
+  if (!expectedPayout || expectedPayout !== log.merchant.toLowerCase()) {
+    // Funds went to an address the merchant does not control (e.g. a payer paying themselves).
+    // Never count this as payment for the invoice.
+    context.logger.warn(
+      {
         invoiceId: invoice.id,
+        expectedPayout: expectedPayout ?? null,
+        paidTo: log.merchant,
         txHash: log.txHash,
-        logIndex: log.logIndex,
-        blockNumber: log.blockNumber,
-        blockHash: log.blockHash,
-        payer: log.payer.toLowerCase(),
-        tokenAddress: log.token.toLowerCase(),
-        gross: log.gross.toString(),
-        fee: log.fee.toString(),
-        net: net.toString(),
-        isLate,
       },
-    });
+      'payment recipient does not match the merchant payout address; ignored',
+    );
+    return;
+  }
 
-    if (isLate) {
-      // EXPIRED/CANCELLED/REFUNDED are final: record the late payment and notify, never reopen.
-      await enqueueWebhookEvent(tx, {
-        invoiceId: invoice.id,
-        merchantId: invoice.merchantId,
-        type: WebhookEventType.PaymentLate,
-        data: {
-          ...webhookData(invoice, invoice.status, context.chainId, payment),
-          invoiceId: invoice.id,
-        },
+  await withStaleRetry(() =>
+    prisma.$transaction(async (tx) => {
+      const existing = await tx.payment.findUnique({
+        where: { txHash_logIndex: { txHash: log.txHash, logIndex: log.logIndex } },
       });
-      return;
-    }
+      if (existing) return;
 
-    if (invoice.status === InvoiceStatus.CREATED || invoice.status === InvoiceStatus.PENDING) {
-      await tx.invoice.update({
+      const current = await tx.invoice.findUnique({
         where: { id: invoice.id },
-        data: { status: InvoiceStatus.CONFIRMING },
+        select: { status: true },
       });
-      await tx.invoiceStatusHistory.create({
+      if (!current) return;
+      const status = current.status as InvoiceStatus;
+
+      const isLate = LATE_STATUSES.includes(status);
+      const net = log.gross - log.fee;
+
+      const payment = await tx.payment.create({
         data: {
           invoiceId: invoice.id,
-          fromStatus: invoice.status,
-          toStatus: InvoiceStatus.CONFIRMING,
-          reason: 'payment observed on chain',
           txHash: log.txHash,
+          logIndex: log.logIndex,
+          blockNumber: log.blockNumber,
+          blockHash: log.blockHash,
+          payer: log.payer.toLowerCase(),
+          tokenAddress: log.token.toLowerCase(),
+          gross: log.gross.toString(),
+          fee: log.fee.toString(),
+          net: net.toString(),
+          isLate,
         },
       });
-      await enqueueWebhookEvent(tx, {
-        invoiceId: invoice.id,
-        merchantId: invoice.merchantId,
-        type: WebhookEventType.InvoiceConfirming,
-        data: {
-          ...webhookData(invoice, InvoiceStatus.CONFIRMING, context.chainId, payment),
+
+      if (isLate) {
+        // EXPIRED/CANCELLED/REFUNDED are final: record the late payment and notify, never reopen.
+        await enqueueWebhookEvent(tx, {
           invoiceId: invoice.id,
-        },
-      });
-    }
-  });
+          merchantId: invoice.merchantId,
+          type: WebhookEventType.PaymentLate,
+          data: {
+            ...webhookData(invoice, status, context.chainId, payment),
+            invoiceId: invoice.id,
+          },
+        });
+        return;
+      }
+
+      if (status === InvoiceStatus.CREATED || status === InvoiceStatus.PENDING) {
+        const updated = await tx.invoice.updateMany({
+          where: { id: invoice.id, status },
+          data: { status: InvoiceStatus.CONFIRMING },
+        });
+        // Lost a race with expiry/cancellation: roll back and re-evaluate from the new status.
+        if (updated.count === 0) throw new StaleInvoiceError();
+
+        await tx.invoiceStatusHistory.create({
+          data: {
+            invoiceId: invoice.id,
+            fromStatus: status,
+            toStatus: InvoiceStatus.CONFIRMING,
+            reason: 'payment observed on chain',
+            txHash: log.txHash,
+          },
+        });
+        await enqueueWebhookEvent(tx, {
+          invoiceId: invoice.id,
+          merchantId: invoice.merchantId,
+          type: WebhookEventType.InvoiceConfirming,
+          data: {
+            ...webhookData(invoice, InvoiceStatus.CONFIRMING, context.chainId, payment),
+            invoiceId: invoice.id,
+          },
+        });
+      }
+    }),
+  );
 
   context.logger.info(
     { invoiceId: invoice.id, txHash: log.txHash, blockNumber: Number(log.blockNumber) },
@@ -192,6 +248,8 @@ export async function settleConfirmedInvoices(
   const invoices = await prisma.invoice.findMany({
     where: { status: InvoiceStatus.CONFIRMING },
     include: { payments: { orderBy: { blockNumber: 'desc' } } },
+    // Oldest first so a backlog larger than one batch is always drained in order.
+    orderBy: { updatedAt: 'asc' },
     take: 200,
   });
 
@@ -277,6 +335,7 @@ export async function processRefundLog(log: RefundLog, context: ProcessorContext
         paymentId: payment.id,
         txHash: log.txHash,
         logIndex: log.logIndex,
+        blockNumber: log.blockNumber,
         amount: log.amount.toString(),
       },
     });
@@ -325,53 +384,117 @@ export async function processRefundLog(log: RefundLog, context: ProcessorContext
 }
 
 /**
- * Roll back payments above `rewindTo` after a reorg and recompute the affected invoices
- * (FR-IDX-3). Emits payment.reorged for every invoice that had state removed.
+ * Roll back payments and refunds above `rewindTo` after a reorg and recompute the affected
+ * invoices (FR-IDX-3). Emits payment.reorged for every invoice whose status changed.
  */
 export async function rewindForReorg(
   rewindTo: bigint,
   context: ProcessorContext,
 ): Promise<number> {
-  const affected = await prisma.payment.findMany({
-    where: { blockNumber: { gt: rewindTo } },
-    include: { invoice: true },
-  });
-  if (affected.length === 0) return 0;
+  const [affectedPayments, affectedRefunds] = await Promise.all([
+    prisma.payment.findMany({
+      where: { blockNumber: { gt: rewindTo } },
+      select: { id: true, invoiceId: true },
+    }),
+    prisma.refund.findMany({
+      where: { blockNumber: { gt: rewindTo } },
+      select: { id: true, payment: { select: { id: true, invoiceId: true } } },
+    }),
+  ]);
+  if (affectedPayments.length === 0 && affectedRefunds.length === 0) return 0;
 
-  const paymentIds = affected.map((payment) => payment.id);
-  const invoiceIds = [...new Set(affected.map((payment) => payment.invoiceId))];
+  const removedPaymentIds = affectedPayments.map((payment) => payment.id);
+  const invoiceIds = [
+    ...new Set([
+      ...affectedPayments.map((payment) => payment.invoiceId),
+      ...affectedRefunds.map((refund) => refund.payment.invoiceId),
+    ]),
+  ];
+  // Payments that survive the rewind but lost refunds need their refunded total recomputed.
+  const survivingPaymentIds = [
+    ...new Set(
+      affectedRefunds
+        .map((refund) => refund.payment.id)
+        .filter((id) => !removedPaymentIds.includes(id)),
+    ),
+  ];
 
   await prisma.$transaction(async (tx) => {
-    await tx.refund.deleteMany({ where: { paymentId: { in: paymentIds } } });
-    await tx.payment.deleteMany({ where: { id: { in: paymentIds } } });
+    await tx.refund.deleteMany({
+      where: {
+        OR: [{ paymentId: { in: removedPaymentIds } }, { blockNumber: { gt: rewindTo } }],
+      },
+    });
+    await tx.payment.deleteMany({ where: { id: { in: removedPaymentIds } } });
+
+    for (const paymentId of survivingPaymentIds) {
+      const aggregate = await tx.refund.aggregate({
+        where: { paymentId },
+        _sum: { amount: true },
+      });
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { refundedTotal: aggregate._sum.amount?.toString() ?? '0' },
+      });
+    }
 
     for (const invoiceId of invoiceIds) {
-      const invoice = affected.find((payment) => payment.invoiceId === invoiceId)?.invoice;
+      const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { payments: { where: { isLate: false } } },
+      });
       if (!invoice) continue;
+      const fromStatus = invoice.status as InvoiceStatus;
 
-      const [remaining, reported] = await Promise.all([
-        tx.payment.count({ where: { invoiceId } }),
-        tx.reportedTransaction.count({ where: { invoiceId } }),
-      ]);
-      const nextStatus =
-        remaining > 0
-          ? InvoiceStatus.CONFIRMING
-          : reported > 0
-            ? InvoiceStatus.PENDING
-            : InvoiceStatus.CREATED;
+      let nextStatus: InvoiceStatus | null = null;
+      const remaining = invoice.payments;
+
+      if (fromStatus === InvoiceStatus.REFUNDED) {
+        // A refund was reorged away: the invoice is settled again unless fully refunded.
+        if (remaining.length === 0) {
+          nextStatus = InvoiceStatus.CREATED;
+        } else {
+          const refunded = remaining.reduce(
+            (sum, row) => sum + BigInt(row.refundedTotal.toString()),
+            0n,
+          );
+          const net = remaining.reduce((sum, row) => sum + BigInt(row.net.toString()), 0n);
+          if (refunded < net) {
+            const paid = remaining.reduce((sum, row) => sum + BigInt(row.gross.toString()), 0n);
+            nextStatus = statusForPaidAmount(paid, BigInt(invoice.amount.toString()));
+          }
+        }
+      } else if (
+        SETTLED_STATUSES.includes(fromStatus) ||
+        fromStatus === InvoiceStatus.CONFIRMING
+      ) {
+        if (remaining.length === 0) {
+          const reported = await tx.reportedTransaction.count({ where: { invoiceId } });
+          nextStatus = reported > 0 ? InvoiceStatus.PENDING : InvoiceStatus.CREATED;
+        } else if (fromStatus !== InvoiceStatus.CONFIRMING) {
+          nextStatus = InvoiceStatus.CONFIRMING;
+        }
+      }
+
+      if (nextStatus === null || nextStatus === fromStatus) continue;
 
       const updated = await tx.invoice.updateMany({
-        where: { id: invoiceId, status: { in: [...SETTLED_STATUSES, InvoiceStatus.CONFIRMING] } },
-        data: { status: nextStatus, paidAt: null },
+        where: { id: invoiceId, status: fromStatus },
+        data: {
+          status: nextStatus,
+          ...(nextStatus === InvoiceStatus.CREATED || nextStatus === InvoiceStatus.PENDING
+            ? { paidAt: null }
+            : {}),
+        },
       });
       if (updated.count === 0) continue;
 
       await tx.invoiceStatusHistory.create({
         data: {
           invoiceId,
-          fromStatus: invoice.status,
+          fromStatus,
           toStatus: nextStatus,
-          reason: 'chain reorganisation rolled back payment',
+          reason: 'chain reorganisation rolled back payment or refund',
         },
       });
       await enqueueWebhookEvent(tx, {
@@ -387,8 +510,13 @@ export async function rewindForReorg(
   });
 
   context.logger.warn(
-    { rewindTo: Number(rewindTo), payments: paymentIds.length, invoices: invoiceIds.length },
-    'reorg rolled back payments',
+    {
+      rewindTo: Number(rewindTo),
+      payments: removedPaymentIds.length,
+      refunds: affectedRefunds.length,
+      invoices: invoiceIds.length,
+    },
+    'reorg rolled back payments and refunds',
   );
-  return affected.length;
+  return affectedPayments.length + affectedRefunds.length;
 }

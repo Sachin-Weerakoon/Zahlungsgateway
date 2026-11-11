@@ -12,11 +12,19 @@ const KEY_SALT = 'cryptopay-webhook-secret';
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
+/** scrypt is deliberately slow and synchronous; derive once per key, not once per webhook. */
+const derivedKeys = new Map<string, Buffer>();
+
 function deriveKey(encryptionKey: string): Buffer {
   if (encryptionKey.length < 32) {
     throw new Error('WEBHOOK_ENCRYPTION_KEY must be at least 32 characters');
   }
-  return scryptSync(encryptionKey, KEY_SALT, 32);
+  let key = derivedKeys.get(encryptionKey);
+  if (!key) {
+    key = scryptSync(encryptionKey, KEY_SALT, 32);
+    derivedKeys.set(encryptionKey, key);
+  }
+  return key;
 }
 
 export function encryptSecret(plaintext: string, encryptionKey: string): string {

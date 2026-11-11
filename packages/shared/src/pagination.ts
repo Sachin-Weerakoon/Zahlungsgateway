@@ -21,10 +21,23 @@ export function encodeCursor(position: CursorPosition): string {
   ).toString('base64url');
 }
 
+export class InvalidCursorError extends Error {
+  constructor() {
+    super('Invalid pagination cursor');
+    this.name = 'InvalidCursorError';
+  }
+}
+
 export function decodeCursor(cursor: string): CursorPosition {
-  const parsed = cursorSchema.safeParse(JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    throw new InvalidCursorError();
+  }
+  const parsed = cursorSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new Error('Invalid pagination cursor');
+    throw new InvalidCursorError();
   }
   return { createdAt: new Date(parsed.data.t), id: parsed.data.id };
 }
