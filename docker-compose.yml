@@ -19,21 +19,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    container_name: cryptopay-redis
-    restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
-    ports:
-      - '6379:6379'
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   # Local development chain. Testnet deployments use Base Sepolia instead.
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
@@ -51,4 +36,3 @@ services:
 
 volumes:
   postgres-data:
-  redis-data:

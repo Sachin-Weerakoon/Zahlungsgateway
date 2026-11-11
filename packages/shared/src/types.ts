@@ -80,8 +80,8 @@ export interface WebhookEventData {
   amount: string;
   fee: string;
   net: string;
-  txHash: string;
-  blockNumber: number;
+  txHash: string | null;
+  blockNumber: number | null;
   confirmations: number;
   chainId: number;
 }

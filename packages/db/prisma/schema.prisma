@@ -122,6 +122,7 @@ model Invoice {
   payments       Payment[]
   statusHistory  InvoiceStatusHistory[]
   webhookEvents  WebhookEvent[]
+  reportedTxs    ReportedTransaction[]
 
   @@unique([merchantId, idempotencyKey])
   @@index([merchantId, createdAt])
@@ -151,6 +152,7 @@ model Payment {
   blockNumber   BigInt
   blockHash     String   @db.VarChar(66)
   payer         String   @db.VarChar(42)
+  tokenAddress  String   @db.VarChar(42)
   gross         Decimal  @db.Decimal(78, 0)
   fee           Decimal  @db.Decimal(78, 0)
   net           Decimal  @db.Decimal(78, 0)
@@ -166,6 +168,7 @@ model Payment {
   @@index([invoiceId])
   @@index([blockNumber])
   @@index([payer])
+  @@index([tokenAddress])
 }
 
 model Refund {
@@ -180,6 +183,18 @@ model Refund {
 
   @@unique([txHash, logIndex])
   @@index([paymentId])
+}
+
+model ReportedTransaction {
+  id        String   @id @default(uuid()) @db.Uuid
+  invoiceId String   @db.Uuid
+  txHash    String   @db.VarChar(66)
+  createdAt DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([invoiceId, txHash])
+  @@index([txHash])
 }
 
 model WebhookEndpoint {
@@ -237,10 +252,12 @@ model Token {
 }
 
 model IndexerState {
-  chainId            Int      @id
+  chainId            Int       @id
   lastProcessedBlock BigInt
-  lastBlockHash      String   @db.VarChar(66)
-  updatedAt          DateTime @updatedAt
+  lastBlockHash      String    @db.VarChar(66)
+  lockedBy           String?   @db.VarChar(64)
+  lockedUntil        DateTime?
+  updatedAt          DateTime  @updatedAt
 }
 
 model AuditLog {

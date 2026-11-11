@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { CHAIN_IDS, CHAIN_NAMES, EXPLORER_URLS } from '@cryptopay/shared';
 
 const chainId = CHAIN_IDS.baseSepolia;
@@ -25,6 +26,12 @@ export default function Home() {
           Create an invoice, let your customer pay from their own wallet, and reconcile every
           payment from on-chain events. The platform never holds funds.
         </p>
+        <Link
+          className="inline-flex min-h-11 items-center rounded-md bg-indigo-700 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-800"
+          href="/login"
+        >
+          Merchant sign in
+        </Link>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-3">

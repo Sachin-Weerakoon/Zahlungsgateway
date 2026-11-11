@@ -10,7 +10,8 @@ Customer browser ──checkout─────┼───────▶│  Ne
                                 │        └──────┬───────┘
                                 │               │ enqueue
                                 │        ┌──────▼───────┐
-                                │        │ Redis queues │
+                                │        │ Webhook queue│
+                                │        │  (Postgres)  │
                                 │        └──┬────────┬──┘
                                 │           │        │
 Customer wallet ──pay()──▶ PaymentProcessor │        │
@@ -21,8 +22,9 @@ Customer wallet ──pay()──▶ PaymentProcessor │        │
                                              └──▶ PostgreSQL ◀┘
 ```
 
-Three services (web, indexer, worker), two data stores (PostgreSQL, Redis) and one contract.
-The web app, indexer and worker hold no key that can sign blockchain transactions.
+Three services (web, indexer, worker), one data store (PostgreSQL) and one contract. Webhook
+delivery is a PostgreSQL-backed queue (ADR 0002), so there is no Redis to operate or back up. The
+web app, indexer and worker hold no key that can sign blockchain transactions.
 
 ## Trust boundaries
 

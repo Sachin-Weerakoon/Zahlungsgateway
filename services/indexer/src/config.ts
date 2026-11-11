@@ -13,9 +13,11 @@ const envSchema = z.object({
   INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().min(500).default(3_000),
   INDEXER_BLOCK_RANGE: z.coerce.number().int().min(1).max(10_000).default(1_000),
   INDEXER_CONFIRMATIONS: z.coerce.number().int().min(1).max(100).default(5),
+  INDEXER_REORG_DEPTH: z.coerce.number().int().min(1).max(1_000).default(12),
+  INDEXER_LEASE_SECONDS: z.coerce.number().int().min(10).max(3_600).default(60),
   INDEXER_START_BLOCK: z.coerce.number().int().min(0).optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  HEALTH_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
+  INDEXER_HEALTH_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
 });
 
 export type IndexerConfig = z.infer<typeof envSchema>;

@@ -13,9 +13,7 @@
   "dependencies": {
     "@cryptopay/db": "*",
     "@cryptopay/shared": "*",
-    "bullmq": "^5.60.0",
     "dotenv": "^17.2.0",
-    "ioredis": "^5.8.0",
     "pino": "^9.13.0",
     "zod": "^4.6.7"
   },

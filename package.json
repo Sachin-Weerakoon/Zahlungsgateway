@@ -27,8 +27,14 @@
     "db:migrate": "npm run migrate --workspace @cryptopay/db",
     "db:seed": "npm run seed --workspace @cryptopay/db",
     "db:studio": "npm run studio --workspace @cryptopay/db",
-    "infra:up": "docker compose up -d postgres redis anvil",
+    "contracts:build": "forge build --root contracts --sizes",
+    "contracts:test": "forge test --root contracts -vvv",
+    "contracts:export-abi": "node scripts/export-abi.mjs",
+    "infra:up": "docker compose up -d postgres anvil",
     "infra:down": "docker compose down"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
@@ -36,6 +42,7 @@
     "eslint": "^9.39.0",
     "eslint-config-prettier": "^10.1.0",
     "prettier": "^3.6.0",
+    "prisma": "6.19.3",
     "tsx": "^4.20.0",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.46.0",

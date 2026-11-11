@@ -43,6 +43,31 @@ jobs:
       - name: Build
         run: npm run build
 
+  contracts:
+    name: Contracts (Foundry)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Solidity dependencies
+        run: |
+          forge install foundry-rs/forge-std@v1.9.7 --no-git
+          forge install OpenZeppelin/openzeppelin-contracts@v5.6.1 --no-git
+
+      - name: Format check
+        run: forge fmt --check
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Test
+        run: forge test -vvv
+
   security:
     name: Security gates
     runs-on: ubuntu-latest

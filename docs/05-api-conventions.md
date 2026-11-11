@@ -38,24 +38,55 @@ Single error shape:
 Rate limits: 100 req/min per API key, 30 req/min per IP on public endpoints. Exceeding them
 returns `429` with `Retry-After`.
 
-## Endpoints (planned)
+## Endpoints
+
+### Authentication and merchant
+
+| Method    | Path                            | Auth        | Purpose                                   |
+| --------- | ------------------------------- | ----------- | ----------------------------------------- |
+| GET       | `/api/auth/nonce`               | none        | Single-use SIWE nonce (5 min)             |
+| POST      | `/api/auth/verify`              | none        | Verify signature, start session           |
+| POST      | `/api/auth/logout`              | session     | End session                               |
+| GET       | `/api/auth/session`             | key/session | Current merchant and admin flag           |
+| GET/PATCH | `/api/v1/me`                    | key/session | Read/update business profile              |
+| POST      | `/api/v1/me/payout-address`     | key/session | Change payout address (wallet signature)  |
+| GET/POST  | `/api/v1/api-keys`              | key/session | List/create API keys (secret shown once)  |
+| DELETE    | `/api/v1/api-keys/{id}`         | key/session | Revoke an API key                         |
+| GET/PUT/DELETE | `/api/v1/webhook-endpoint` | key/session | Read/set+rotate secret/disable endpoint   |
+
+### Invoices, payments, reports
 
 | Method | Path                                      | Auth        | Purpose                         |
 | ------ | ----------------------------------------- | ----------- | ------------------------------- |
-| GET    | `/api/auth/nonce`                         | none        | SIWE nonce                      |
-| POST   | `/api/auth/verify`                        | none        | Verify signature, start session |
-| POST   | `/api/auth/logout`                        | session     | End session                     |
 | POST   | `/api/v1/invoices`                        | key/session | Create invoice                  |
 | GET    | `/api/v1/invoices`                        | key/session | List invoices                   |
 | GET    | `/api/v1/invoices/{id}`                   | key/session | Invoice detail                  |
 | POST   | `/api/v1/invoices/{id}/cancel`            | key/session | Cancel a CREATED invoice        |
 | GET    | `/api/v1/payments`                        | key/session | List payments/refunds           |
-| GET    | `/api/v1/reports/settlement`              | session     | Settlement totals               |
-| GET    | `/api/v1/exports/{invoices,payments}.csv` | session     | CSV export                      |
-| POST   | `/api/v1/webhook-endpoint/test`           | session     | Send test event                 |
-| GET    | `/api/public/invoices/{id}`               | none        | Checkout data                   |
-| POST   | `/api/public/invoices/{id}/tx`            | none        | Report tx hash (informational)  |
-| GET    | `/api/public/invoices/{id}/events`        | none        | SSE status stream               |
+| GET    | `/api/v1/reports/settlement`              | key/session | Settlement totals               |
+| GET    | `/api/v1/exports/invoices`                | key/session | Invoice CSV export              |
+| GET    | `/api/v1/exports/payments`                | key/session | Payment CSV export              |
+
+### Public checkout
+
+| Method | Path                              | Auth | Purpose                        |
+| ------ | --------------------------------- | ---- | ------------------------------ |
+| GET    | `/api/public/invoices/{id}`       | none | Checkout data                  |
+| POST   | `/api/public/invoices/{id}/tx`    | none | Report tx hash (informational) |
+| GET    | `/api/public/invoices/{id}/events`| none | SSE status stream              |
+
+### Admin (wallet allowlist)
+
+| Method | Path                                 | Auth  | Purpose                         |
+| ------ | ------------------------------------ | ----- | ------------------------------- |
+| GET    | `/api/admin/merchants`               | admin | List/search merchants           |
+| POST   | `/api/admin/merchants/{id}/status`   | admin | Suspend or reactivate           |
+| GET    | `/api/admin/tokens`                  | admin | Token allowlist mirror          |
+| POST   | `/api/admin/tokens`                  | admin | Upsert allowlisted token        |
+| GET    | `/api/admin/audit`                   | admin | Append-only audit log           |
+| GET    | `/api/admin/health`                  | admin | Database, indexer and queue     |
+| GET    | `/api/admin/chain`                   | admin | Live contract configuration     |
+| GET    | `/api/health`                        | none  | Liveness                        |
 
 ## Webhook signature
 

@@ -11,37 +11,39 @@ frozen after Phase 0.
 - [x] PostgreSQL schema with constraints, indexes and audit log
 - [x] Service skeletons with validated config, structured logging and health endpoints
 - [x] Web app skeleton with testnet banner, security headers and health route
-- [x] Docker Compose: PostgreSQL, Redis, local Anvil
+- [x] Docker Compose: PostgreSQL, local Anvil (Redis removed per ADR 0002)
 - [x] `.env.example`, CI quality/security workflow, gitleaks config
 - [x] Scope freeze, architecture, ADR, API conventions, runbook, demo script
 - [x] Install dependencies and verify lint, typecheck, tests, build
 - [x] Create the initial Prisma migration SQL (`0001_init`)
 - [x] First commit
-- [ ] Install Foundry (required before Phase 1)
+- [x] Install Foundry (forge 1.9.0, solc 0.8.28)
 
 **Gate 0:** `npm run lint && npm run typecheck && npm run test && npm run build` passes; the schema
 validates; scope is frozen.
 
 ## Phase 1 — Contracts and event contract
 
-- [ ] `TestUSDC` (6 decimals, 1,000-token mint cap)
-- [ ] `PaymentProcessor` (`pay`, `refund`, fee cap, treasury, allowlist, pause)
-- [ ] OpenZeppelin SafeERC20, ReentrancyGuard, Pausable, Ownable2Step, custom errors
-- [ ] Unit + fuzz + invariant tests (95% lines, zero contract balance)
-- [ ] Gas snapshot, Slither clean, source verification
-- [ ] Deploy script writing `deployments/<chainId>.json`
-- [ ] Export ABI to `@cryptopay/shared`
+- [x] `TestUSDC` (6 decimals, 1,000-token mint cap)
+- [x] `PaymentProcessor` (`pay`, `refund`, fee cap, treasury, allowlist, pause)
+- [x] OpenZeppelin SafeERC20, ReentrancyGuardTransient, Pausable, Ownable2Step, custom errors
+- [x] Unit + fuzz + invariant tests (31 passing; zero contract balance invariant holds)
+- [ ] Gas snapshot (done: `pay` 137,339 < 150k), Slither clean, source verification
+      — Slither not installed and explorer verification needs a Base Sepolia deployment
+- [x] Deploy script writing `deployments/<chainId>.json` (validated against local Anvil)
+- [x] Export ABI to `@cryptopay/shared`
 
 **Gate 1:** contract behaviour matches SC-1 to SC-13 locally; ABI frozen for the indexer.
 
 ## Phase 2 — API, indexer, worker
 
-- [ ] SIWE auth, sessions, admin list, merchant scoping
-- [ ] API keys (hash, prefix, revoke), payout address change with signature + audit
-- [ ] Invoice create/list/get/cancel, idempotency, expiry job
-- [ ] Indexer: ordered polling, cursor, confirmations, reorgs, RPC failover, late payments
-- [ ] Webhooks: signing, retries, delivery logs, SSRF checks
-- [ ] Integration tests against local Anvil
+- [x] SIWE auth, sessions, admin list, merchant scoping
+- [x] API keys (hash, prefix, revoke), payout address change with signature + audit
+- [x] Invoice create/list/get/cancel, idempotency, expiry job
+- [x] Indexer: ordered polling, cursor, confirmations, reorgs, RPC failover, late payments,
+      single-instance lease
+- [x] Webhooks: signing, retries, delivery logs, SSRF checks
+- [ ] Integration tests against local Anvil (blocked: no PostgreSQL/Docker locally)
 
 **Gate 2:** AC-3 to AC-7 foundations pass; indexer restart/replay is safe.
 

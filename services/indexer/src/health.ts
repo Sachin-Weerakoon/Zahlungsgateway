@@ -4,12 +4,14 @@ import type { Logger } from './logger.js';
 export interface HealthState {
   startedAt: number;
   lastProcessedBlock: bigint | null;
+  latestBlock: bigint | null;
   rpcHealthy: boolean;
+  lastError: string | null;
 }
 
 /**
- * Minimal health endpoint for container probes and the admin health page.
- * Phase 2 extends this with indexer lag and RPC status metrics.
+ * Health endpoint for container probes and the admin health page.
+ * `/healthz` is liveness; `/readyz` requires a healthy RPC and a persisted cursor.
  */
 export function startHealthServer(port: number, logger: Logger, state: HealthState) {
   const server = createServer((request, response) => {
@@ -20,7 +22,13 @@ export function startHealthServer(port: number, logger: Logger, state: HealthSta
           status: 'ok',
           uptimeSeconds: Math.floor((Date.now() - state.startedAt) / 1000),
           lastProcessedBlock: state.lastProcessedBlock?.toString() ?? null,
+          latestBlock: state.latestBlock?.toString() ?? null,
+          lagBlocks:
+            state.latestBlock !== null && state.lastProcessedBlock !== null
+              ? Number(state.latestBlock - state.lastProcessedBlock)
+              : null,
           rpcHealthy: state.rpcHealthy,
+          lastError: state.lastError,
         }),
       );
       return;

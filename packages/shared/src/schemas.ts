@@ -103,6 +103,37 @@ export const setPayoutAddressSchema = z.object({
   message: z.string().min(1),
 });
 
+export const updateProfileSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    supportEmail: z.union([z.string().trim().email().max(254), z.literal('')]).optional(),
+  })
+  .refine((value) => value.name !== undefined || value.supportEmail !== undefined, {
+    message: 'Provide at least one field to update',
+  });
+
+export const upsertTokenSchema = z.object({
+  address: evmAddressSchema,
+  symbol: z.string().trim().min(1).max(16),
+  decimals: z.number().int().min(0).max(36),
+  allowed: z.boolean(),
+});
+
+export const auditQuerySchema = z.object({
+  merchantId: z.string().uuid().optional(),
+  action: z.string().trim().max(64).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+});
+
+export const merchantSearchSchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+});
+
+export const idempotencyKeySchema = z.string().trim().min(1).max(255);
+
 export const reportTransactionSchema = z.object({
   txHash: bytes32Schema,
 });

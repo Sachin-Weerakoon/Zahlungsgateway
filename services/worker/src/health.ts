@@ -1,13 +1,25 @@
 import { createServer } from 'node:http';
 import type { Logger } from './logger.js';
 
+export interface WorkerHealthStats {
+  pending: number;
+  failedLast24h: number;
+  succeededLast24h: number;
+  lastDeliveryAt: string | null;
+}
+
 /**
- * Minimal worker health endpoint (Phase 0 skeleton).
- * Phase 3 adds queue depth and webhook failure-rate metrics.
+ * Worker health endpoint. `/healthz` is liveness, `/readyz` requires database access so the
+ * queue is observable and a stuck worker is restarted by the orchestrator.
  */
-export function startHealthServer(port: number, logger: Logger) {
+export function startHealthServer(
+  port: number,
+  logger: Logger,
+  getStats: () => Promise<WorkerHealthStats>,
+) {
   const startedAt = Date.now();
-  const server = createServer((request, response) => {
+
+  const server = createServer(async (request, response) => {
     if (request.url === '/healthz') {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(
@@ -18,6 +30,24 @@ export function startHealthServer(port: number, logger: Logger) {
       );
       return;
     }
+
+    if (request.url === '/readyz') {
+      try {
+        const stats = await getStats();
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ ready: true, ...stats }));
+      } catch (error) {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            ready: false,
+            error: error instanceof Error ? error.message : 'health check failed',
+          }),
+        );
+      }
+      return;
+    }
+
     response.writeHead(404, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ error: 'not_found' }));
   });

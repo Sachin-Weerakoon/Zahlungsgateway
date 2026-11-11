@@ -26,5 +26,6 @@ Node.js 24 and npm 11; pnpm, Docker and Foundry are not installed yet.
 
 - One `npm install` at the root installs every workspace.
 - CI runs lint, typecheck, tests, build and security gates on every pull request.
-- Docker Compose supplies PostgreSQL, Redis and a local Anvil chain.
+- Docker Compose supplies PostgreSQL and a local Anvil chain. (The Phase 0 Redis service was
+  removed by ADR 0002; webhook delivery uses a PostgreSQL-backed queue.)
 - Foundry must be installed before Phase 1; the deployment workflow is manual and reviewed.
