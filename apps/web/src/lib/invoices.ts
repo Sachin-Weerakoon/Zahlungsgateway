@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { keccak256 } from 'viem';
+import { encodeAbiParameters, getAddress, keccak256, toHex, type Address, type Hex } from 'viem';
 import { prisma, type Prisma } from '@cryptopay/db';
 import {
   ApiError,
@@ -19,8 +19,26 @@ export interface CreateInvoiceResult {
   replayed: boolean;
 }
 
-function newInvoiceRef(): string {
-  return keccak256(randomBytes(32));
+/**
+ * Mirror of PaymentProcessor.invoiceRefFor: keccak256(abi.encode(merchant, token, amount, salt)).
+ * Binding the reference to the terms stops a third party occupying it with different terms.
+ */
+export function computeInvoiceRef(
+  salt: Hex,
+  merchant: Address,
+  token: Address,
+  amount: bigint,
+): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: 'address' }, { type: 'address' }, { type: 'uint256' }, { type: 'bytes32' }],
+      [merchant, token, amount, salt],
+    ),
+  );
+}
+
+function newInvoiceSalt(): Hex {
+  return toHex(randomBytes(32));
 }
 
 async function requireMerchant(merchantId: string) {
@@ -81,7 +99,14 @@ export async function createInvoice(
 
   const now = new Date();
   const expiresAt = new Date(now.getTime() + input.expiresInMinutes * 60_000);
-  const invoiceRef = newInvoiceRef();
+  const payoutAddress = getAddress(merchant.payoutAddress);
+  const salt = newInvoiceSalt();
+  const invoiceRef = computeInvoiceRef(
+    salt,
+    payoutAddress,
+    getAddress(input.tokenAddress),
+    BigInt(input.amount),
+  );
 
   try {
     const invoice = await prisma.$transaction(async (tx) => {
@@ -89,6 +114,8 @@ export async function createInvoice(
         data: {
           merchantId: context.merchantId,
           invoiceRef,
+          salt,
+          payoutAddress,
           amount: input.amount,
           tokenAddress: input.tokenAddress.toLowerCase(),
           description: input.description ?? null,
@@ -135,7 +162,10 @@ export async function createInvoice(
         where: { merchantId_key: { merchantId: context.merchantId, key: idempotencyKey } },
       });
       if (existing && existing.requestHash === fingerprint) {
-        return { invoice: existing.responseBody as unknown as CreateInvoiceResult['invoice'], replayed: true };
+        return {
+          invoice: existing.responseBody as unknown as CreateInvoiceResult['invoice'],
+          replayed: true,
+        };
       }
       throw new ApiError(
         ApiErrorCode.IdempotencyConflict,
@@ -188,8 +218,7 @@ export async function listInvoices(context: AuthContext, query: ListInvoicesQuer
 
   return {
     data: page.map(toInvoiceSummary),
-    nextCursor:
-      hasMore && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null,
+    nextCursor: hasMore && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null,
   };
 }
 
@@ -243,7 +272,10 @@ export async function cancelInvoice(context: AuthContext, invoiceId: string) {
 }
 
 /** Public checkout view. Never exposes merchant secrets. */
-export async function getPublicInvoice(invoiceId: string, chain: { chainId: number; contractAddress: string }) {
+export async function getPublicInvoice(
+  invoiceId: string,
+  chain: { chainId: number; contractAddress: string },
+) {
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
     include: { merchant: true },
@@ -273,10 +305,7 @@ export async function reportTransaction(invoiceId: string, txHash: string) {
   if (invoice.expiresAt.getTime() <= Date.now()) {
     throw new ApiError(ApiErrorCode.InvoiceExpired, 'Invoice has expired');
   }
-  if (
-    invoice.status !== InvoiceStatus.CREATED &&
-    invoice.status !== InvoiceStatus.PENDING
-  ) {
+  if (invoice.status !== InvoiceStatus.CREATED && invoice.status !== InvoiceStatus.PENDING) {
     throw new ApiError(
       ApiErrorCode.InvoiceNotPayable,
       `Invoice is not payable from status ${invoice.status}`,

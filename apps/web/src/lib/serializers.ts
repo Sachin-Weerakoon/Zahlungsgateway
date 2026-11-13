@@ -14,6 +14,8 @@ interface InvoiceRow {
   id: string;
   merchantId: string;
   invoiceRef: string;
+  salt?: string | null;
+  payoutAddress?: string | null;
   status: string;
   amount: { toString(): string };
   tokenAddress: string;
@@ -118,25 +120,33 @@ export function toPublicInvoice(
     description: invoice.description,
     merchant: {
       name: merchant.name ?? 'Merchant',
-      payoutAddress: merchant.payoutAddress ?? '0x0000000000000000000000000000000000000000',
+      // The reference is bound to the payout snapshotted at creation, not the current one.
+      payoutAddress:
+        invoice.payoutAddress ??
+        merchant.payoutAddress ??
+        '0x0000000000000000000000000000000000000000',
     },
     contractAddress: chain.contractAddress,
     chainId: chain.chainId,
     invoiceRef: invoice.invoiceRef,
+    salt: invoice.salt ?? null,
     expiresAt: invoice.expiresAt.toISOString(),
     createdAt: invoice.createdAt.toISOString(),
   };
 }
 
-export function toMerchantProfile(merchant: {
-  id: string;
-  walletAddress: string;
-  name: string | null;
-  supportEmail: string | null;
-  payoutAddress: string | null;
-  status: string;
-  createdAt: Date;
-}, role: MerchantRole): MerchantProfile {
+export function toMerchantProfile(
+  merchant: {
+    id: string;
+    walletAddress: string;
+    name: string | null;
+    supportEmail: string | null;
+    payoutAddress: string | null;
+    status: string;
+    createdAt: Date;
+  },
+  role: MerchantRole,
+): MerchantProfile {
   return {
     id: merchant.id,
     walletAddress: merchant.walletAddress,

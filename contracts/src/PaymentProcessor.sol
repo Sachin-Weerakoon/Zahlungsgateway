@@ -13,7 +13,11 @@ import {
 /**
  * @title PaymentProcessor
  * @notice Non-custodial payment splitter for allowlisted ERC-20 tokens.
- * @dev Each invoice reference accepts exactly one payment. Funds move directly from the
+ * @dev Each invoice reference accepts exactly one payment. The reference is derived on chain
+ *      from the payment terms, `keccak256(abi.encode(merchant, token, amount, salt))`, so a
+ *      third party cannot occupy an invoice's reference with a different merchant, token or
+ *      amount (front-running or griefing). Paying with identical terms simply pays the
+ *      merchant the full invoice amount. Funds move directly from the
  *      payer to the treasury (fee) and the merchant (net) in the same transaction, so the
  *      contract never holds a token balance. Refunds are pulled from the merchant and sent
  *      to the recorded payer. Fee-on-transfer and rebasing tokens are unsupported.
@@ -124,21 +128,24 @@ contract PaymentProcessor is Ownable2Step, Pausable, ReentrancyGuardTransient {
 
     /**
      * @notice Pay an invoice from the caller's wallet.
-     * @param invoiceRef Unique 32-byte invoice reference.
+     * @dev The invoice reference is derived from the terms, see `invoiceRefFor`.
+     * @param salt Random 32-byte salt issued by the platform for this invoice.
      * @param merchant Merchant payout address recorded for refunds.
      * @param token Allowlisted ERC-20 token address.
      * @param amount Gross amount in token base units.
      */
-    function pay(bytes32 invoiceRef, address merchant, address token, uint256 amount)
+    function pay(bytes32 salt, address merchant, address token, uint256 amount)
         external
         nonReentrant
         whenNotPaused
     {
-        if (invoiceRef == bytes32(0)) revert InvalidReference();
+        if (salt == bytes32(0)) revert InvalidReference();
         if (merchant == address(0) || token == address(0)) revert ZeroAddress();
         if (amount == 0) revert InvalidAmount();
         if (amount > MAX_AMOUNT) revert AmountTooLarge(amount, MAX_AMOUNT);
         if (!tokenAllowed[token]) revert TokenNotAllowed(token);
+
+        bytes32 invoiceRef = invoiceRefFor(salt, merchant, token, amount);
         if (_payments[invoiceRef].merchant != address(0)) revert AlreadyPaid(invoiceRef);
 
         uint256 fee = (amount * feeBps) / BPS_DENOMINATOR;
@@ -232,6 +239,15 @@ contract PaymentProcessor is Ownable2Step, Pausable, ReentrancyGuardTransient {
     /// @notice Resume new payments.
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /// @notice Invoice reference that binds a salt to its merchant, token and amount.
+    function invoiceRefFor(bytes32 salt, address merchant, address token, uint256 amount)
+        public
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(merchant, token, amount, salt));
     }
 
     /// @notice Whether an invoice reference has been paid.

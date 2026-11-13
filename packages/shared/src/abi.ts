@@ -85,6 +85,40 @@ export const paymentProcessorAbi = [
   },
   {
     "type": "function",
+    "name": "invoiceRefFor",
+    "inputs": [
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "merchant",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "isPaid",
     "inputs": [
       {
@@ -140,7 +174,7 @@ export const paymentProcessorAbi = [
     "name": "pay",
     "inputs": [
       {
-        "name": "invoiceRef",
+        "name": "salt",
         "type": "bytes32",
         "internalType": "bytes32"
       },

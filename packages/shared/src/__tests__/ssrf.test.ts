@@ -86,3 +86,43 @@ describe('assertDeliverableWebhookUrl', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe('IPv6 SSRF bypasses', () => {
+  it('blocks IPv4-mapped addresses in the hex form the URL parser produces', () => {
+    // new URL('https://[::ffff:127.0.0.1]/').hostname === '[::ffff:7f00:1]'
+    for (const ip of [
+      '::ffff:7f00:1',
+      '[::ffff:a9fe:a9fe]',
+      '::ffff:0a00:0001',
+      '::7f00:1',
+      '::ffff:0:7f00:1',
+      '64:ff9b::7f00:1',
+      '64:ff9b::a9fe:a9fe',
+      '2002:7f00:1::1',
+      '2001:db8::1',
+      '2001::1',
+      'fec0::1',
+      'ff02::1',
+      'fe80::1%eth0',
+    ]) {
+      expect(isBlockedAddress(ip), ip).toBe(true);
+    }
+  });
+
+  it('still allows public IPv6 and public mapped IPv4', () => {
+    for (const ip of ['2606:4700:4700::1111', '2a00:1450:4001::200e', '::ffff:808:808', '64:ff9b::808:808']) {
+      expect(isBlockedAddress(ip), ip).toBe(false);
+    }
+  });
+
+  it('rejects URLs whose normalised hostname is a mapped private address', () => {
+    for (const url of ['https://[::ffff:127.0.0.1]/hook', 'https://[::ffff:169.254.169.254]/']) {
+      expect(validateWebhookUrl(url).ok, url).toBe(false);
+    }
+  });
+
+  it('treats malformed IPv6 literals as blocked', () => {
+    expect(isBlockedAddress('1::2::3')).toBe(true);
+    expect(isBlockedAddress('gggg::1')).toBe(true);
+  });
+});

@@ -6,6 +6,9 @@ export const BPS_DENOMINATOR = 10_000n;
 /** Contract hard cap on the platform fee (5%). */
 export const MAX_FEE_BPS = 500;
 
+/** Contract cap on a single payment (uint80 max), see PaymentProcessor.MAX_AMOUNT. */
+export const MAX_PAYMENT_AMOUNT = 2n ** 80n - 1n;
+
 /** Default platform fee used by the test environment (1%). */
 export const DEFAULT_FEE_BPS = 100;
 
@@ -62,6 +65,7 @@ export const AUDIT_LOG_RETENTION_DAYS = 365;
 export const CHAIN_IDS = {
   baseSepolia: 84532,
   ethereumSepolia: 11155111,
+  anvil: 31337,
 } as const;
 
 export type SupportedChainId = (typeof CHAIN_IDS)[keyof typeof CHAIN_IDS];
@@ -69,10 +73,11 @@ export type SupportedChainId = (typeof CHAIN_IDS)[keyof typeof CHAIN_IDS];
 export const CHAIN_NAMES: Record<SupportedChainId, string> = {
   [CHAIN_IDS.baseSepolia]: 'Base Sepolia',
   [CHAIN_IDS.ethereumSepolia]: 'Ethereum Sepolia',
+  [CHAIN_IDS.anvil]: 'Anvil (local)',
 };
 
-/** Explorer base URLs per chain id. */
-export const EXPLORER_URLS: Record<SupportedChainId, string> = {
+/** Explorer base URLs per chain id. Local chains have no explorer. */
+export const EXPLORER_URLS: Partial<Record<SupportedChainId, string>> = {
   [CHAIN_IDS.baseSepolia]: 'https://sepolia.basescan.org',
   [CHAIN_IDS.ethereumSepolia]: 'https://sepolia.etherscan.io',
 };

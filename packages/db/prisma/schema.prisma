@@ -105,6 +105,10 @@ model Invoice {
   id                String        @id @default(uuid()) @db.Uuid
   merchantId        String        @db.Uuid
   invoiceRef        String        @unique @db.Char(66)
+  /// Salt passed to PaymentProcessor.pay; invoiceRef = keccak256(abi.encode(payout, token, amount, salt)).
+  salt              String?       @db.Char(66)
+  /// Merchant payout address snapshotted at creation; the on-chain reference is bound to it.
+  payoutAddress     String?       @db.VarChar(42)
   amount            Decimal       @db.Decimal(78, 0)
   tokenAddress      String        @db.VarChar(42)
   description       String?       @db.VarChar(500)
@@ -176,6 +180,8 @@ model Refund {
   paymentId String   @db.Uuid
   txHash    String   @db.VarChar(66)
   logIndex  Int
+  /// Block of the refund log, used to roll refunds back on a chain reorganisation.
+  blockNumber BigInt?
   amount    Decimal  @db.Decimal(78, 0)
   createdAt DateTime @default(now())
 
@@ -183,6 +189,7 @@ model Refund {
 
   @@unique([txHash, logIndex])
   @@index([paymentId])
+  @@index([blockNumber])
 }
 
 model ReportedTransaction {
